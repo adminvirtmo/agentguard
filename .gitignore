@@ -1,0 +1,14 @@
+.agentguard/
+agentguard
+agentguard-report.md
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
+
+# Build/test output
+bin/
+dist/
+coverage.out
+*.test

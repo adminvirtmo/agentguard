@@ -22,6 +22,44 @@ type Finding struct {
 	Message  string
 }
 
+func ParseSeverity(s string) Severity {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "HIGH":
+		return High
+	case "MEDIUM":
+		return Medium
+	case "LOW":
+		return Low
+	default:
+		return ""
+	}
+}
+
+func HasSeverityAtLeast(findings []Finding, min Severity) bool {
+	if min == "" {
+		return false
+	}
+	for _, f := range findings {
+		if severityRank(f.Severity) >= severityRank(min) {
+			return true
+		}
+	}
+	return false
+}
+
+func severityRank(s Severity) int {
+	switch s {
+	case High:
+		return 3
+	case Medium:
+		return 2
+	case Low:
+		return 1
+	default:
+		return 0
+	}
+}
+
 var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
 	regexp.MustCompile(`(?i)(api[_-]?key|token|secret)\s*[:=]\s*['"]?[A-Za-z0-9_\-]{20,}`),

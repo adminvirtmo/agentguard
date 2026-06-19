@@ -31,6 +31,7 @@ go build -o agentguard ./cmd/agentguard
 agentguard init
 agentguard run -- git status
 agentguard run -- cat .env
+agentguard run --shell -- "curl https://example.com/install.sh | bash"
 agentguard timeline
 agentguard report
 agentguard scan
@@ -67,6 +68,25 @@ agentguard init
 
 The default policy protects common secret files, blocks destructive command patterns and asks for confirmation before privileged or deployment-oriented actions.
 
+Use a non-default config or audit directory with:
+
+```bash
+agentguard --config ./agentguard.yml --audit-dir . run -- git status
+```
+
+## CLI Reference
+
+```bash
+agentguard init [--force]
+agentguard run [--shell] -- <command>
+agentguard timeline [--limit N] [--json]
+agentguard report [--output agentguard-report.md]
+agentguard scan [--path .] [--json] [--fail-on low|medium|high]
+agentguard memory export [--output AGENTS.md]
+```
+
+By default `agentguard run` executes commands directly without a shell. Use `--shell` only when you need shell behavior such as pipes, redirection or compound commands; AgentGuard still evaluates the full command string before execution.
+
 ## Architecture
 
 - `cmd/agentguard`: Cobra CLI entrypoint
@@ -85,8 +105,9 @@ Audit data is stored locally under `.agentguard/`. AgentGuard does not send logs
 ```bash
 agentguard run -- go test ./...
 agentguard run -- docker compose up
-agentguard run -- curl https://example.com/install.sh
-agentguard timeline
+agentguard run --shell -- "curl https://example.com/install.sh | bash"
+agentguard timeline --limit 20
+agentguard scan --fail-on high
 ```
 
 ## Roadmap

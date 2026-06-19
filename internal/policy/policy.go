@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode"
 
 	"github.com/adminvirtmo/agentguard/internal/config"
 )
@@ -40,7 +41,8 @@ func Evaluate(cfg config.Config, args []string) Decision {
 			return Decision{Status: StatusBlocked, Reason: "blocked domain", MatchedRule: domain}
 		}
 	}
-	if rule := firstMatch(cfg.Deny.Commands, cmd); rule != "" {
+	denyRules := append(defaultDenyCommands(), cfg.Deny.Commands...)
+	if rule := firstMatch(denyRules, cmd); rule != "" {
 		return Decision{Status: StatusBlocked, Reason: reasonForDeny(rule), MatchedRule: rule}
 	}
 	if rule := firstMatch(cfg.Confirm.Commands, cmd); rule != "" {
@@ -53,15 +55,22 @@ func DetectProtectedPaths(patterns, args []string) []string {
 	var found []string
 	seen := map[string]bool{}
 	for _, arg := range args {
-		clean := strings.Trim(arg, `"'`)
-		for _, pattern := range patterns {
-			if protectedPathMatch(pattern, clean) && !seen[clean] {
-				found = append(found, clean)
-				seen[clean] = true
+		for _, token := range pathTokens(arg) {
+			for _, pattern := range patterns {
+				if protectedPathMatch(pattern, token) && !seen[token] {
+					found = append(found, token)
+					seen[token] = true
+				}
 			}
 		}
 	}
 	return found
+}
+
+func pathTokens(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune("|;&<>(){}", r)
+	})
 }
 
 func firstMatch(patterns []string, command string) string {
@@ -101,6 +110,10 @@ func CommandMatches(pattern, command string) bool {
 }
 
 func protectedPathMatch(pattern, path string) bool {
+	path = normalizePathToken(path)
+	if path == "" || containsShellExpansion(path) {
+		return false
+	}
 	pattern = expandHome(pattern)
 	path = expandHome(path)
 	if ok, _ := filepath.Match(pattern, path); ok {
@@ -122,6 +135,38 @@ func protectedPathMatch(pattern, path string) bool {
 	return false
 }
 
+func normalizePathToken(token string) string {
+	token = strings.TrimSpace(token)
+	token = strings.Trim(token, `"'`)
+	token = strings.TrimRight(token, ".,:")
+	if strings.HasPrefix(token, "file://") {
+		token = strings.TrimPrefix(token, "file://")
+	}
+	if i := strings.IndexByte(token, '='); i >= 0 && i+1 < len(token) {
+		candidate := token[i+1:]
+		if strings.Contains(candidate, "/") || strings.HasPrefix(candidate, ".") {
+			token = candidate
+		}
+	}
+	return token
+}
+
+func containsShellExpansion(path string) bool {
+	return strings.ContainsAny(path, "$`")
+}
+
+func defaultDenyCommands() []string {
+	return []string{
+		"rm -rf /",
+		"rm -rf /*",
+		"chmod -R 777 *",
+		"chown -R *",
+		"mkfs *",
+		"dd if=* of=*",
+		":(){ :|:& };:",
+	}
+}
+
 func expandHome(p string) string {
 	if strings.HasPrefix(p, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -138,6 +183,10 @@ func reasonForDeny(rule string) string {
 	switch {
 	case strings.Contains(rule, "rm -rf"):
 		return "destructive removal"
+	case strings.Contains(rule, "chmod") || strings.Contains(rule, "chown"):
+		return "dangerous permission change"
+	case strings.Contains(rule, "mkfs") || strings.Contains(rule, "dd if="):
+		return "destructive disk operation"
 	case strings.Contains(rule, "| bash") || strings.Contains(rule, "| sh"):
 		return "dangerous pipe execution"
 	default:

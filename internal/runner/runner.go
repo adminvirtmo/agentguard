@@ -21,6 +21,7 @@ type Runner struct {
 	In     io.Reader
 	Out    io.Writer
 	Err    io.Writer
+	Shell  bool
 }
 
 func (r Runner) Run(ctx context.Context, args []string) int {
@@ -34,7 +35,11 @@ func (r Runner) Run(ctx context.Context, args []string) int {
 		r.Err = os.Stderr
 	}
 	start := time.Now()
-	decision := policy.Evaluate(r.Config, args)
+	policyArgs := args
+	if r.Shell {
+		policyArgs = []string{strings.Join(args, " ")}
+	}
+	decision := policy.Evaluate(r.Config, policyArgs)
 	switch decision.Status {
 	case policy.StatusBlocked:
 		fmt.Fprintf(r.Out, "BLOCKED: %s\nReason: %s\n", blockedMessage(decision), decision.Reason)
@@ -72,7 +77,12 @@ func (r Runner) exec(ctx context.Context, args []string) int {
 		fmt.Fprintln(r.Err, "no command provided")
 		return 2
 	}
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	var cmd *exec.Cmd
+	if r.Shell {
+		cmd = exec.CommandContext(ctx, shellName(), shellFlag(), strings.Join(args, " "))
+	} else {
+		cmd = exec.CommandContext(ctx, args[0], args[1:]...)
+	}
 	cmd.Stdin = r.In
 	cmd.Stdout = r.Out
 	cmd.Stderr = r.Err
@@ -84,6 +94,17 @@ func (r Runner) exec(ctx context.Context, args []string) int {
 		return 127
 	}
 	return 0
+}
+
+func shellName() string {
+	if sh := os.Getenv("SHELL"); sh != "" {
+		return sh
+	}
+	return "/bin/sh"
+}
+
+func shellFlag() string {
+	return "-c"
 }
 
 func (r Runner) log(args []string, status, reason string, code int, dur time.Duration, sensitive []string) {

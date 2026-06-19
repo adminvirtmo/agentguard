@@ -21,4 +21,10 @@ func TestScanFindsEnvAndSecret(t *testing.T) {
 	if len(findings) < 3 {
 		t.Fatalf("expected multiple findings, got %#v", findings)
 	}
+	if !HasSeverityAtLeast(findings, Medium) {
+		t.Fatalf("expected findings at or above medium, got %#v", findings)
+	}
+	if HasSeverityAtLeast(findings, ParseSeverity("invalid")) {
+		t.Fatal("invalid severity should not match")
+	}
 }

@@ -35,9 +35,28 @@ func TestProtectedPathBlocksEnv(t *testing.T) {
 	}
 }
 
+func TestProtectedPathBlocksEnvInShellString(t *testing.T) {
+	cfg := config.Default()
+	d := Evaluate(cfg, []string{"cat .env | sed 's/x/y/'"})
+	if d.Status != StatusBlocked {
+		t.Fatalf("status = %s, want blocked", d.Status)
+	}
+	if len(d.SensitiveFiles) != 1 || d.SensitiveFiles[0] != ".env" {
+		t.Fatalf("sensitive files = %#v", d.SensitiveFiles)
+	}
+}
+
 func TestDangerousCommandBlocked(t *testing.T) {
 	cfg := config.Default()
 	d := Evaluate(cfg, []string{"rm", "-rf", "build"})
+	if d.Status != StatusBlocked {
+		t.Fatalf("status = %s, want blocked", d.Status)
+	}
+}
+
+func TestBuiltInDestructiveCommandBlocked(t *testing.T) {
+	cfg := config.Default()
+	d := Evaluate(cfg, []string{"mkfs", "/dev/disk1"})
 	if d.Status != StatusBlocked {
 		t.Fatalf("status = %s, want blocked", d.Status)
 	}

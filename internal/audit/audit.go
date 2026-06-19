@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -100,8 +101,12 @@ func (s *Store) Add(e Event) error {
 }
 
 func (s *Store) List(limit int) ([]Event, error) {
+	order := "ASC"
+	if limit > 0 {
+		order = "DESC"
+	}
 	query := `SELECT id, timestamp, working_dir, command, args, status, reason, exit_code, duration_ms, sensitive_files, user
-		FROM events ORDER BY id ASC`
+		FROM events ORDER BY id ` + order
 	var rows *sql.Rows
 	var err error
 	if limit > 0 {
@@ -124,7 +129,13 @@ func (s *Store) List(limit int) ([]Event, error) {
 		_ = json.Unmarshal([]byte(sensitive), &e.SensitiveFiles)
 		events = append(events, e)
 	}
-	return events, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if limit > 0 {
+		slices.Reverse(events)
+	}
+	return events, nil
 }
 
 func (s *Store) JSONLPath() string {
