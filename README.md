@@ -75,6 +75,7 @@ Create a local policy:
 
 ```bash
 agentguard init
+agentguard init --profile strict
 ```
 
 Run normal commands through AgentGuard:
@@ -122,7 +123,9 @@ Then inspect the session:
 
 ```bash
 agentguard timeline
+agentguard timeline --status blocked --since 24h
 agentguard report
+agentguard report --since 24h
 agentguard scan
 agentguard memory export
 ```
@@ -165,8 +168,16 @@ Create `agentguard.yml` in the current directory.
 ```bash
 agentguard init
 agentguard init --force
+agentguard init --profile strict
+agentguard init --profile permissive
 agentguard --config ./security/agentguard.yml init
 ```
+
+Available profiles:
+
+- `balanced`: default profile for normal development.
+- `strict`: adds stronger protections around cloud CLIs, package publishing, GitHub CLI and more credential files.
+- `permissive`: keeps core destructive-command protection with fewer confirmations for local experiments.
 
 ### `agentguard run`
 
@@ -188,6 +199,8 @@ Show a readable history of audited actions.
 ```bash
 agentguard timeline
 agentguard timeline --limit 20
+agentguard timeline --status blocked
+agentguard timeline --since 24h
 agentguard timeline --json
 ```
 
@@ -206,6 +219,7 @@ Generate a Markdown session report.
 ```bash
 agentguard report
 agentguard report --output agentguard-report.md
+agentguard report --since 24h
 ```
 
 The report includes:
@@ -238,6 +252,8 @@ Security scan
 [LOW] AGENTS.md not found: AGENTS.md
 ```
 
+When possible, the scanner also checks whether sensitive files are tracked by Git and prints a recommendation for each finding.
+
 ### `agentguard memory export`
 
 Export safe project memory for AI agents.
@@ -256,6 +272,14 @@ AgentGuard reads `agentguard.yml` by default. Generate it with:
 
 ```bash
 agentguard init
+```
+
+Choose a profile:
+
+```bash
+agentguard init --profile balanced
+agentguard init --profile strict
+agentguard init --profile permissive
 ```
 
 Default configuration:

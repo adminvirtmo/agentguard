@@ -22,3 +22,21 @@ func TestLoadYAML(t *testing.T) {
 		t.Fatal("expected default protect and deny rules")
 	}
 }
+
+func TestProfiles(t *testing.T) {
+	for _, name := range ProfileNames() {
+		cfg := Profile(name)
+		if cfg.Version != 1 {
+			t.Fatalf("profile %s version = %d, want 1", name, cfg.Version)
+		}
+		if len(cfg.Protect.Paths) == 0 {
+			t.Fatalf("profile %s has no protected paths", name)
+		}
+	}
+	if ValidProfile("unknown") {
+		t.Fatal("unknown profile should be invalid")
+	}
+	if len(Profile(ProfileStrict).Deny.Commands) <= len(Profile(ProfilePermissive).Deny.Commands) {
+		t.Fatal("strict profile should have more deny rules than permissive")
+	}
+}

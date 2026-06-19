@@ -45,21 +45,26 @@ func rootCmd() *cobra.Command {
 
 func initCmd() *cobra.Command {
 	var force bool
+	var profile string
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Create agentguard.yml",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !config.ValidProfile(profile) {
+				return fmt.Errorf("--profile must be one of %s", strings.Join(config.ProfileNames(), ", "))
+			}
 			if _, err := os.Stat(configPath); err == nil && !force {
 				return fmt.Errorf("%s already exists", configPath)
 			}
-			if err := config.WriteDefault(configPath); err != nil {
+			if err := config.WriteProfile(configPath, profile); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Created %s\n", configPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "Created %s using %s profile\n", configPath, profile)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing config file")
+	cmd.Flags().StringVar(&profile, "profile", config.ProfileBalanced, "policy profile: balanced, strict or permissive")
 	return cmd
 }
 
@@ -92,10 +97,20 @@ func runCmd() *cobra.Command {
 func timelineCmd() *cobra.Command {
 	var limit int
 	var jsonOutput bool
+	var status string
+	var sinceValue string
 	cmd := &cobra.Command{
 		Use:   "timeline",
 		Short: "Show local command history",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			status = strings.ToLower(status)
+			if !audit.ValidStatus(status) {
+				return fmt.Errorf("--status must be one of %s", strings.Join(audit.StatusNames(), ", "))
+			}
+			since, err := audit.ParseSince(sinceValue, time.Now())
+			if err != nil {
+				return err
+			}
 			store, err := audit.Open(auditDir)
 			if err != nil {
 				return err
@@ -105,6 +120,7 @@ func timelineCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			events = audit.Filter(events, status, since)
 			if jsonOutput {
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
@@ -123,15 +139,22 @@ func timelineCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum number of events to show")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print timeline as JSON")
+	cmd.Flags().StringVar(&status, "status", "", "filter by status: allowed, blocked, confirmed, denied or failed")
+	cmd.Flags().StringVar(&sinceValue, "since", "", "filter events since a duration, RFC3339 timestamp or YYYY-MM-DD date")
 	return cmd
 }
 
 func reportCmd() *cobra.Command {
 	var output string
+	var sinceValue string
 	cmd := &cobra.Command{
 		Use:   "report",
 		Short: "Generate agentguard-report.md",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			since, err := audit.ParseSince(sinceValue, time.Now())
+			if err != nil {
+				return err
+			}
 			store, err := audit.Open(auditDir)
 			if err != nil {
 				return err
@@ -141,6 +164,7 @@ func reportCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			events = audit.Filter(events, "", since)
 			if err := report.Generate(events, output); err != nil {
 				return err
 			}
@@ -149,6 +173,7 @@ func reportCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", report.DefaultPath, "Markdown report path")
+	cmd.Flags().StringVar(&sinceValue, "since", "", "include events since a duration, RFC3339 timestamp or YYYY-MM-DD date")
 	return cmd
 }
 
