@@ -11,10 +11,13 @@
 - Markdown report generation
 - Project scan
 - Safe memory export
+- Setup diagnostics with `agentguard doctor`
+- JSON reports
+- Experimental MCP tool-call inspection
 
 ## Next
 
-- Secure MCP proxy
+- Secure MCP proxy built on top of MCP inspection
 - TUI
 - Local web UI
 - Claude Code integration

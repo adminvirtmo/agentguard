@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -19,7 +20,9 @@ const (
 
 type Finding struct {
 	Severity       Severity `json:"severity"`
+	Type           string   `json:"type,omitempty"`
 	Path           string   `json:"path,omitempty"`
+	Line           int      `json:"line,omitempty"`
 	Message        string   `json:"message"`
 	Recommendation string   `json:"recommendation,omitempty"`
 }
@@ -62,14 +65,19 @@ func severityRank(s Severity) int {
 	}
 }
 
-var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
-	regexp.MustCompile(`(?i)(api[_-]?key|token|secret)\s*[:=]\s*['"]?[A-Za-z0-9_\-]{20,}`),
-	regexp.MustCompile(`ghp_[A-Za-z0-9]{30,}`),
-	regexp.MustCompile(`sk-[A-Za-z0-9]{20,}`),
-	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
-	regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{20,}`),
-	regexp.MustCompile(`(?i)authorization:\s*bearer\s+[A-Za-z0-9._\-]{20,}`),
+type secretPattern struct {
+	kind string
+	re   *regexp.Regexp
+}
+
+var secretPatterns = []secretPattern{
+	{kind: "private-key", re: regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)},
+	{kind: "generic-secret", re: regexp.MustCompile(`(?i)(api[_-]?key|token|secret)\s*[:=]\s*['"]?[A-Za-z0-9_\-]{20,}`)},
+	{kind: "github-token", re: regexp.MustCompile(`ghp_[A-Za-z0-9]{30,}`)},
+	{kind: "openai-token", re: regexp.MustCompile(`sk-[A-Za-z0-9]{20,}`)},
+	{kind: "aws-access-key", re: regexp.MustCompile(`AKIA[0-9A-Z]{16}`)},
+	{kind: "slack-token", re: regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{20,}`)},
+	{kind: "bearer-token", re: regexp.MustCompile(`(?i)authorization:\s*bearer\s+[A-Za-z0-9._\-]{20,}`)},
 }
 
 func Scan(root string) ([]Finding, error) {
@@ -77,16 +85,16 @@ func Scan(root string) ([]Finding, error) {
 	gitignore := loadGitignore(filepath.Join(root, ".gitignore"))
 	tracked := gitTrackedFiles(root)
 	if exists(filepath.Join(root, ".env")) {
-		findings = append(findings, Finding{Severity: High, Path: ".env", Message: ".env exists and may contain secrets", Recommendation: "Keep .env local, add it to .gitignore, and store only .env.example in Git."})
+		findings = append(findings, Finding{Severity: High, Type: "sensitive-file", Path: ".env", Message: ".env exists and may contain secrets", Recommendation: "Keep .env local, add it to .gitignore, and store only .env.example in Git."})
 		if !ignored(gitignore, ".env") {
-			findings = append(findings, Finding{Severity: Medium, Path: ".env", Message: ".env is not listed in .gitignore", Recommendation: "Add .env and .env.* to .gitignore."})
+			findings = append(findings, Finding{Severity: Medium, Type: "gitignore", Path: ".env", Message: ".env is not listed in .gitignore", Recommendation: "Add .env and .env.* to .gitignore."})
 		}
 		if tracked[".env"] {
-			findings = append(findings, Finding{Severity: High, Path: ".env", Message: ".env is tracked by Git", Recommendation: "Remove it from Git history or at least run git rm --cached .env and rotate exposed secrets."})
+			findings = append(findings, Finding{Severity: High, Type: "git-tracked-secret", Path: ".env", Message: ".env is tracked by Git", Recommendation: "Remove it from Git history or at least run git rm --cached .env and rotate exposed secrets."})
 		}
 	}
 	if !exists(filepath.Join(root, "AGENTS.md")) {
-		findings = append(findings, Finding{Severity: Low, Path: "AGENTS.md", Message: "AGENTS.md not found", Recommendation: "Run agentguard memory export to create safe instructions for AI agents."})
+		findings = append(findings, Finding{Severity: Low, Type: "agent-memory", Path: "AGENTS.md", Message: "AGENTS.md not found", Recommendation: "Run agentguard memory export to create safe instructions for AI agents."})
 	}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -101,15 +109,15 @@ func Scan(root string) ([]Finding, error) {
 		}
 		rel, _ := filepath.Rel(root, path)
 		if isPrivateKeyName(name) {
-			findings = append(findings, Finding{Severity: High, Path: rel, Message: "private key filename detected", Recommendation: "Move private keys out of the repository and rotate them if they were committed."})
+			findings = append(findings, Finding{Severity: High, Type: "private-key-file", Path: rel, Message: "private key filename detected", Recommendation: "Move private keys out of the repository and rotate them if they were committed."})
 			if tracked[filepath.ToSlash(rel)] {
-				findings = append(findings, Finding{Severity: High, Path: rel, Message: "private key is tracked by Git", Recommendation: "Remove it from Git history and rotate the key."})
+				findings = append(findings, Finding{Severity: High, Type: "git-tracked-secret", Path: rel, Message: "private key is tracked by Git", Recommendation: "Remove it from Git history and rotate the key."})
 			}
 		}
 		if shouldInspect(name) {
-			found, _ := fileContainsSecret(path)
-			if found {
-				findings = append(findings, Finding{Severity: High, Path: rel, Message: "potential secret detected in file", Recommendation: "Move the value to a local secret store or environment variable and rotate it if it was committed."})
+			match, _ := fileSecretMatch(path)
+			if match.found {
+				findings = append(findings, Finding{Severity: High, Type: match.kind, Path: rel, Line: match.line, Message: "potential secret detected in file", Recommendation: "Move the value to a local secret store or environment variable and rotate it if it was committed."})
 			}
 		}
 		return nil
@@ -125,8 +133,12 @@ func Format(findings []Finding) string {
 		return b.String()
 	}
 	for _, f := range findings {
+		location := f.Path
+		if f.Line > 0 {
+			location += ":" + strconv.Itoa(f.Line)
+		}
 		if f.Path != "" {
-			b.WriteString("[" + string(f.Severity) + "] " + f.Message + ": " + f.Path + "\n")
+			b.WriteString("[" + string(f.Severity) + "] " + f.Message + ": " + location + "\n")
 		} else {
 			b.WriteString("[" + string(f.Severity) + "] " + f.Message + "\n")
 		}
@@ -201,20 +213,41 @@ func shouldInspect(name string) bool {
 	}
 }
 
-func fileContainsSecret(path string) (bool, error) {
+type secretMatch struct {
+	found bool
+	kind  string
+	line  int
+}
+
+func fileSecretMatch(path string) (secretMatch, error) {
 	b, err := os.ReadFile(path)
 	if err != nil || len(b) > 2*1024*1024 {
-		return false, err
+		return secretMatch{}, err
 	}
 	if looksBinary(b) {
-		return false, nil
+		return secretMatch{}, nil
 	}
-	for _, re := range secretPatterns {
-		if re.Match(b) {
-			return true, nil
+	for _, pattern := range secretPatterns {
+		if loc := pattern.re.FindIndex(b); loc != nil {
+			return secretMatch{found: true, kind: pattern.kind, line: lineForOffset(b, loc[0])}, nil
 		}
 	}
-	return false, nil
+	return secretMatch{}, nil
+}
+
+func fileContainsSecret(path string) (bool, error) {
+	match, err := fileSecretMatch(path)
+	return match.found, err
+}
+
+func lineForOffset(b []byte, offset int) int {
+	line := 1
+	for i := 0; i < offset && i < len(b); i++ {
+		if b[i] == '\n' {
+			line++
+		}
+	}
+	return line
 }
 
 func looksBinary(b []byte) bool {

@@ -126,7 +126,9 @@ agentguard timeline
 agentguard timeline --status blocked --since 24h
 agentguard report
 agentguard report --since 24h
+agentguard report --format json --output report.json
 agentguard scan
+agentguard doctor
 agentguard memory export
 ```
 
@@ -230,6 +232,12 @@ The report includes:
 - failed commands
 - security notes
 
+JSON output is available for automation:
+
+```bash
+agentguard report --format json --output agentguard-report.json
+```
+
 ### `agentguard scan`
 
 Scan the current project for common local security risks.
@@ -252,7 +260,29 @@ Security scan
 [LOW] AGENTS.md not found: AGENTS.md
 ```
 
-When possible, the scanner also checks whether sensitive files are tracked by Git and prints a recommendation for each finding.
+When possible, the scanner also checks whether sensitive files are tracked by Git, reports line numbers for detected secrets and prints a recommendation for each finding.
+
+### `agentguard doctor`
+
+Check the local AgentGuard setup.
+
+```bash
+agentguard doctor
+agentguard doctor --json
+```
+
+Doctor verifies the binary, Go, Git, config loading, audit storage and AgentGuard-related `.gitignore` entries.
+
+### `agentguard mcp inspect`
+
+Inspect a JSON MCP-like tool call against the local policy.
+
+```bash
+echo '{"name":"read_file","params":{"path":".env"}}' | agentguard mcp inspect
+agentguard mcp inspect --input mcp-call.json
+```
+
+This is the first MCP safety building block. It is not a full MCP proxy yet; it evaluates a tool-call payload and returns a JSON decision.
 
 ### `agentguard memory export`
 
@@ -420,6 +450,7 @@ agentguard/
 ├── internal/audit/          # SQLite and JSONL audit store
 ├── internal/config/         # YAML config loading and defaults
 ├── internal/memory/         # Safe AGENTS.md / CLAUDE.md export
+├── internal/mcp/            # Experimental MCP inspection helpers
 ├── internal/policy/         # Command and protected-path policy engine
 ├── internal/report/         # Markdown session reports
 ├── internal/runner/         # Guarded command execution
@@ -459,7 +490,7 @@ agentguard memory export
 
 Planned after the MVP:
 
-- secure MCP proxy
+- secure MCP proxy built on top of `agentguard mcp inspect`
 - TUI
 - local web UI
 - Claude Code integration

@@ -29,6 +29,15 @@ func TestScanFindsEnvAndSecret(t *testing.T) {
 	if HasSeverityAtLeast(findings, ParseSeverity("invalid")) {
 		t.Fatal("invalid severity should not match")
 	}
+	foundLine := false
+	for _, finding := range findings {
+		if finding.Path == ".env" && finding.Type == "generic-secret" && finding.Line == 1 {
+			foundLine = true
+		}
+	}
+	if !foundLine {
+		t.Fatalf("expected secret line finding, got %#v", findings)
+	}
 }
 
 func TestScanFindsTrackedEnv(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/adminvirtmo/agentguard/internal/audit"
 	"github.com/adminvirtmo/agentguard/internal/config"
+	"github.com/adminvirtmo/agentguard/internal/doctor"
+	"github.com/adminvirtmo/agentguard/internal/mcp"
 	"github.com/adminvirtmo/agentguard/internal/memory"
 	"github.com/adminvirtmo/agentguard/internal/report"
 	"github.com/adminvirtmo/agentguard/internal/runner"
@@ -39,7 +42,7 @@ func rootCmd() *cobra.Command {
 	}
 	cmd.PersistentFlags().StringVar(&configPath, "config", config.DefaultPath, "path to AgentGuard YAML config")
 	cmd.PersistentFlags().StringVar(&auditDir, "audit-dir", ".", "directory where .agentguard audit data is stored")
-	cmd.AddCommand(initCmd(), runCmd(), timelineCmd(), reportCmd(), scanCmd(), memoryCmd())
+	cmd.AddCommand(initCmd(), runCmd(), timelineCmd(), reportCmd(), scanCmd(), memoryCmd(), doctorCmd(), mcpCmd())
 	return cmd
 }
 
@@ -147,6 +150,7 @@ func timelineCmd() *cobra.Command {
 func reportCmd() *cobra.Command {
 	var output string
 	var sinceValue string
+	var format string
 	cmd := &cobra.Command{
 		Use:   "report",
 		Short: "Generate agentguard-report.md",
@@ -165,8 +169,17 @@ func reportCmd() *cobra.Command {
 				return err
 			}
 			events = audit.Filter(events, "", since)
-			if err := report.Generate(events, output); err != nil {
-				return err
+			switch strings.ToLower(format) {
+			case "markdown", "md":
+				if err := report.Generate(events, output); err != nil {
+					return err
+				}
+			case "json":
+				if err := report.GenerateJSON(events, output); err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("--format must be markdown or json")
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Wrote %s\n", output)
 			return nil
@@ -174,6 +187,7 @@ func reportCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", report.DefaultPath, "Markdown report path")
 	cmd.Flags().StringVar(&sinceValue, "since", "", "include events since a duration, RFC3339 timestamp or YYYY-MM-DD date")
+	cmd.Flags().StringVar(&format, "format", "markdown", "report format: markdown or json")
 	return cmd
 }
 
@@ -242,5 +256,79 @@ func memoryCmd() *cobra.Command {
 	}
 	exportCmd.Flags().StringVarP(&output, "output", "o", memory.DefaultPath, "memory file path")
 	cmd.AddCommand(exportCmd)
+	return cmd
+}
+
+func doctorCmd() *cobra.Command {
+	var jsonOutput bool
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Check AgentGuard local setup",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			checks := doctor.Run(configPath, auditDir)
+			if jsonOutput {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(checks); err != nil {
+					return err
+				}
+			} else {
+				for _, check := range checks {
+					fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s - %s\n", strings.ToUpper(string(check.Status)), check.Name, check.Message)
+					if check.Fix != "" {
+						fmt.Fprintf(cmd.OutOrStdout(), "     fix: %s\n", check.Fix)
+					}
+				}
+			}
+			if !doctor.Healthy(checks) {
+				return fmt.Errorf("doctor found setup errors")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print checks as JSON")
+	return cmd
+}
+
+func mcpCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "mcp",
+		Short: "Experimental MCP safety helpers",
+	}
+	var input string
+	inspectCmd := &cobra.Command{
+		Use:   "inspect",
+		Short: "Inspect a JSON MCP-like tool call against the local policy",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load %s: %w", configPath, err)
+			}
+			var payload []byte
+			if input != "" {
+				payload, err = os.ReadFile(input)
+			} else {
+				payload, err = io.ReadAll(os.Stdin)
+			}
+			if err != nil {
+				return err
+			}
+			decision, err := mcp.Inspect(cfg, payload)
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(decision); err != nil {
+				return err
+			}
+			if decision.Status == "blocked" {
+				return fmt.Errorf("MCP call blocked: %s", decision.Reason)
+			}
+			return nil
+		},
+	}
+	inspectCmd.Flags().StringVarP(&input, "input", "i", "", "JSON file to inspect; stdin is used when empty")
+	cmd.AddCommand(inspectCmd)
 	return cmd
 }
