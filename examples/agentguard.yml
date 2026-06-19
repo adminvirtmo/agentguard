@@ -1,0 +1,41 @@
+version: 1
+
+protect:
+  paths:
+    - ".env"
+    - ".env.*"
+    - "~/.ssh/*"
+    - "~/.gnupg/*"
+    - "*.pem"
+    - "*.key"
+    - "id_rsa"
+    - "id_ed25519"
+
+deny:
+  commands:
+    - "rm -rf *"
+    - "git push --force"
+    - "curl * | bash"
+    - "wget * | sh"
+    - "terraform destroy"
+    - "kubectl delete *"
+    - "docker system prune *"
+  domains:
+    - "pastebin.com"
+    - "webhook.site"
+
+confirm:
+  commands:
+    - "sudo *"
+    - "docker *"
+    - "kubectl *"
+    - "terraform apply"
+    - "git push *"
+
+allow:
+  commands:
+    - "git status"
+    - "git diff"
+    - "npm test"
+    - "pnpm test"
+    - "go test ./..."
